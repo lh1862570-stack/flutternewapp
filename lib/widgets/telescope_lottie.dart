@@ -8,8 +8,8 @@ class TelescopeLottie extends StatelessWidget {
   Widget build(BuildContext context) {
     return Lottie.asset(
       'assets/lottie/telescope.json',
-      width: 200,
-      height: 200,
+      width: 250,
+      height: 250,
       fit: BoxFit.contain,
       repeat: true,
       animate: true,

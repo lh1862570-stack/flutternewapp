@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import '../widgets/telescope_lottie.dart'; // Importa el widget
-import 'login_page.dart'; // Importa la página de login
 
-class StartPage extends StatelessWidget {
-  const StartPage({super.key});
+class LoginPage extends StatelessWidget {
+  const LoginPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -35,17 +34,10 @@ class StartPage extends StatelessWidget {
                   elevation: 8,
                   borderRadius: BorderRadius.circular(12),
                   color: Colors.black.withValues(alpha: 0.5),
-                                      child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const LoginPage(),
-                          ),
-                        );
-                      },
-                      child: Container(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {},
+                    child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
                       child: const Text(
                         'Comenzar',
