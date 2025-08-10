@@ -60,18 +60,7 @@ class _LoginPageState extends State<LoginPage> {
                          child: const TelescopeLottie(),
                        ),
                      ),
-                     SizedBox(height: screenHeight * 0.02),
-                     Text(
-                       'Bienvenidos',
-                       style: TextStyle(
-                         color: Colors.white,
-                         fontSize: screenWidth * 0.08, // 8% del ancho de pantalla
-                         fontWeight: FontWeight.bold,
-                         letterSpacing: 1.2,
-                       ),
-                       textAlign: TextAlign.center,
-                     ),
-                     SizedBox(height: screenHeight * 0.04),
+
                      _buildTextField(
                       controller: _emailController,
                       hintText: 'Correo electrónico',
