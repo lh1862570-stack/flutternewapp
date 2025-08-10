@@ -3,12 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../widgets/telescope_lottie.dart';
 import '../config/app_router.dart';
+import '../services/auth_service.dart';
 
 class StartPage extends StatelessWidget {
   const StartPage({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // Redirección automática si hay sesión activa
+    if (AuthService.instance.isLoggedIn) {
+      // Usar microtask para evitar navegación durante build sin montar
+      Future.microtask(() {
+        if (context.mounted) context.go(AppRouter.home);
+      });
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
