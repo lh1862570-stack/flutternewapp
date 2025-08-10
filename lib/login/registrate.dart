@@ -38,7 +38,11 @@ class _RegistratePageState extends State<RegistratePage> {
 
     return WillPopScope(
       onWillPop: () async {
-        context.pop();
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/');
+        }
         return false;
       },
       child: Scaffold(
@@ -63,7 +67,11 @@ class _RegistratePageState extends State<RegistratePage> {
                     size: screenWidth * 0.08,
                   ),
                   onPressed: () {
-                    context.pop();
+                    if (context.canPop()) {
+                      context.pop();
+                    } else {
+                      context.go('/');
+                    }
                   },
                 ),
               ),

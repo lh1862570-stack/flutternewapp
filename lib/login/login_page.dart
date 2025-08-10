@@ -183,6 +183,26 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
           ),
+          Positioned(
+            top: screenHeight * 0.02,
+            left: screenWidth * 0.02,
+            child: SafeArea(
+              child: IconButton(
+                icon: Icon(
+                  Icons.arrow_back,
+                  color: Colors.white.withOpacity(0.9),
+                  size: screenWidth * 0.08,
+                ),
+                onPressed: () {
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go('/');
+                  }
+                },
+              ),
+            ),
+          ),
         ],
       ),
     );
