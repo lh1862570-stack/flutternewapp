@@ -38,11 +38,7 @@ class _RegistratePageState extends State<RegistratePage> {
 
     return WillPopScope(
       onWillPop: () async {
-        if (context.canPop()) {
-          context.pop();
-        } else {
-          context.go('/');
-        }
+        context.go('/login');
         return false;
       },
       child: Scaffold(
@@ -53,28 +49,6 @@ class _RegistratePageState extends State<RegistratePage> {
             Image.asset(
               'assets/images/login.png',
               fit: BoxFit.cover,
-            ),
-
-            /// Flecha de retroceso arriba de todo
-            Positioned(
-              top: screenHeight * 0.02,
-              left: screenWidth * 0.02,
-              child: SafeArea(
-                child: IconButton(
-                  icon: Icon(
-                    Icons.arrow_back,
-                    color: Colors.white.withOpacity(0.9),
-                    size: screenWidth * 0.08,
-                  ),
-                  onPressed: () {
-                    if (context.canPop()) {
-                      context.pop();
-                    } else {
-                      context.go('/');
-                    }
-                  },
-                ),
-              ),
             ),
 
             SafeArea(
@@ -243,6 +217,23 @@ class _RegistratePageState extends State<RegistratePage> {
                       SizedBox(height: screenHeight * 0.01),
                     ],
                   ),
+                ),
+              ),
+            ),
+            /// Flecha de retroceso al frente
+            Positioned(
+              top: screenHeight * 0.02,
+              left: screenWidth * 0.02,
+              child: SafeArea(
+                child: IconButton(
+                  icon: Icon(
+                    Icons.arrow_back,
+                    color: Colors.white.withOpacity(0.9),
+                    size: screenWidth * 0.08,
+                  ),
+                  onPressed: () {
+                    context.go('/login');
+                  },
                 ),
               ),
             ),
