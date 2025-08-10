@@ -26,6 +26,7 @@ class MainShell extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.black,
+      extendBody: true,
       body: child,
       bottomNavigationBar: CurvedNavigationBar(
         index: currentIndex,
