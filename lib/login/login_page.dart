@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../widgets/telescope_lottie.dart';
-import 'registrate.dart'; // Asegúrate de importar la página de registro
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -129,16 +128,11 @@ class _LoginPageState extends State<LoginPage> {
                          ],
                        ),
                        child: ElevatedButton(
-                         onPressed: () {
-                           if (_formKey.currentState!.validate()) {
-                             ScaffoldMessenger.of(context).showSnackBar(
-                               const SnackBar(
-                                 content: Text('Iniciando sesión...'),
-                                 backgroundColor: Colors.green,
-                               ),
-                             );
-                           }
-                         },
+                          onPressed: () {
+                            if (_formKey.currentState!.validate()) {
+                              context.go('/home');
+                            }
+                          },
                          style: ElevatedButton.styleFrom(
                            backgroundColor: Colors.transparent,
                            foregroundColor: const Color(0xFF33FFE6),

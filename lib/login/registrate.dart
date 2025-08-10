@@ -185,12 +185,7 @@ class _RegistratePageState extends State<RegistratePage> {
                         child: ElevatedButton(
                           onPressed: () {
                             if (_formKey.currentState!.validate()) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Creando cuenta...'),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
+                              context.go('/home');
                             }
                           },
                           style: ElevatedButton.styleFrom(
