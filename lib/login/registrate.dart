@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../widgets/telescope_lottie.dart';
+import '../utils/validators.dart';
+import '../services/auth_service.dart';
 
 class RegistratePage extends StatefulWidget {
   const RegistratePage({super.key});
@@ -91,12 +93,10 @@ class _RegistratePageState extends State<RegistratePage> {
                         hintText: 'Correo electrónico',
                         keyboardType: TextInputType.emailAddress,
                         validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Por favor ingresa tu correo electrónico';
-                          }
-                          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                              .hasMatch(value)) {
-                            return 'Por favor ingresa un correo válido';
+                          final String? base = Validators.validateEmail(value);
+                          if (base != null) return base;
+                          if (AuthService.instance.isEmailRegistered(value!.trim())) {
+                            return 'El correo ya está registrado';
                           }
                           return null;
                         },
@@ -106,8 +106,10 @@ class _RegistratePageState extends State<RegistratePage> {
                         controller: _usernameController,
                         hintText: 'Nombre de usuario',
                         validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Por favor ingresa tu nombre de usuario';
+                          final String? base = Validators.validateUsername(value);
+                          if (base != null) return base;
+                          if (AuthService.instance.isUsernameTaken(value!.trim())) {
+                            return 'El nombre de usuario ya está en uso';
                           }
                           return null;
                         },
@@ -130,15 +132,7 @@ class _RegistratePageState extends State<RegistratePage> {
                             });
                           },
                         ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Por favor ingresa tu contraseña';
-                          }
-                          if (value.length < 6) {
-                            return 'La contraseña debe tener al menos 6 caracteres';
-                          }
-                          return null;
-                        },
+                        validator: Validators.validateRegisterPassword,
                       ),
                       SizedBox(height: screenHeight * 0.025),
                       _buildTextField(
@@ -183,9 +177,22 @@ class _RegistratePageState extends State<RegistratePage> {
                           ],
                         ),
                         child: ElevatedButton(
-                          onPressed: () {
+                          onPressed: () async {
                             if (_formKey.currentState!.validate()) {
-                              context.go('/home');
+                              try {
+                                await AuthService.instance.register(
+                                  emailRaw: _emailController.text,
+                                  usernameRaw: _usernameController.text,
+                                  password: _passwordController.text,
+                                );
+                                if (!context.mounted) return;
+                                context.go('/home');
+                              } on AuthException catch (e) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.message)),
+                                );
+                              }
                             }
                           },
                           style: ElevatedButton.styleFrom(

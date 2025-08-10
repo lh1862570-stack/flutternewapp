@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../widgets/telescope_lottie.dart';
+import '../utils/validators.dart';
+import '../services/auth_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -61,58 +63,38 @@ class _LoginPageState extends State<LoginPage> {
                      ),
 
                      _buildTextField(
-                      controller: _emailController,
-                      hintText: 'Correo electrónico',
-                      keyboardType: TextInputType.emailAddress,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingresa tu correo electrónico';
-                        }
-                        if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                            .hasMatch(value)) {
-                          return 'Por favor ingresa un correo válido';
-                        }
-                        return null;
-                                             },
+                       controller: _emailController,
+                       hintText: 'Correo electrónico',
+                       keyboardType: TextInputType.emailAddress,
+                       validator: Validators.validateEmail,
                      ),
                      SizedBox(height: screenHeight * 0.025),
                      _buildTextField(
                        controller: _usernameController,
                        hintText: 'Nombre de usuario',
                        validator: (value) {
-                         if (value == null || value.isEmpty) {
-                           return 'Por favor ingresa tu nombre de usuario';
-                         }
-                         return null;
+                         return null; // opcional en login
                        },
                      ),
                      SizedBox(height: screenHeight * 0.025),
                      _buildTextField(
-                      controller: _passwordController,
-                      hintText: 'Contraseña',
-                      obscureText: !_isPasswordVisible,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _isPasswordVisible
-                              ? Icons.visibility_off
-                              : Icons.visibility,
-                          color: Colors.white60,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _isPasswordVisible = !_isPasswordVisible;
-                          });
-                        },
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingresa tu contraseña';
-                        }
-                        if (value.length < 6) {
-                          return 'La contraseña debe tener al menos 6 caracteres';
-                        }
-                        return null;
-                                             },
+                       controller: _passwordController,
+                       hintText: 'Contraseña',
+                       obscureText: !_isPasswordVisible,
+                       suffixIcon: IconButton(
+                         icon: Icon(
+                           _isPasswordVisible
+                               ? Icons.visibility_off
+                               : Icons.visibility,
+                           color: Colors.white60,
+                         ),
+                         onPressed: () {
+                           setState(() {
+                             _isPasswordVisible = !_isPasswordVisible;
+                           });
+                         },
+                       ),
+                       validator: Validators.validateLoginPassword,
                      ),
                      SizedBox(height: screenHeight * 0.01),
                      Container(
@@ -128,11 +110,23 @@ class _LoginPageState extends State<LoginPage> {
                          ],
                        ),
                        child: ElevatedButton(
-                          onPressed: () {
-                            if (_formKey.currentState!.validate()) {
-                              context.go('/home');
-                            }
-                          },
+                           onPressed: () async {
+                             if (_formKey.currentState!.validate()) {
+                               try {
+                                 await AuthService.instance.login(
+                                   emailRaw: _emailController.text,
+                                   password: _passwordController.text,
+                                 );
+                                 if (!context.mounted) return;
+                                 context.go('/home');
+                               } on AuthException catch (e) {
+                                 if (!context.mounted) return;
+                                 ScaffoldMessenger.of(context).showSnackBar(
+                                   SnackBar(content: Text(e.message)),
+                                 );
+                               }
+                             }
+                           },
                          style: ElevatedButton.styleFrom(
                            backgroundColor: Colors.transparent,
                            foregroundColor: const Color(0xFF33FFE6),
