@@ -9,7 +9,7 @@ class SearchPage extends StatelessWidget {
       backgroundColor: Colors.black,
       body: Center(
         child: Text(
-          'Buscador',
+          'Buscar',
           style: TextStyle(
             color: Colors.white,
             fontSize: 32,

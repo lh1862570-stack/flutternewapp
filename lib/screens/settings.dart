@@ -9,7 +9,7 @@ class SettingsPage extends StatelessWidget {
       backgroundColor: Colors.black,
       body: Center(
         child: Text(
-          'Configuraciones',
+          'Configuración',
           style: TextStyle(
             color: Colors.white,
             fontSize: 32,
