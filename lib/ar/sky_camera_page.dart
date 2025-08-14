@@ -87,6 +87,11 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   static const double _horizontalFovDeg = 85.0;
   static const double _verticalFovDeg = 65.0;
 
+  // Bloqueo/Histeresis para centrar una sola constelación
+  String? _lockedConstellation;
+  DateTime? _lockedSince;
+  static const Duration _minLockDuration = Duration(milliseconds: 500);
+
   @override
   void initState() {
     super.initState();
@@ -378,11 +383,35 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
             builder: (BuildContext context, BoxConstraints constraints) {
               final Size size = Size(constraints.maxWidth, constraints.maxHeight);
               final List<_ConstellationConfig> configs = _dynamicConstellations ?? _defaultConstellations;
-              final List<_ConstellationPlacement> placements = _computeConstellationPlacements(
+              final List<_ConstellationPlacement> placementsAll = _computeConstellationPlacements(
                 stars: _visibleStars,
                 configs: configs,
               );
-              // Depuración: si falta alguna constelación, mostramos su nombre en HUD
+              // Lock: si hay una cerca del centro, la fijamos por un corto tiempo
+              final Size s = size;
+              const double centerRadiusPx = 80;
+              _ConstellationPlacement? centered;
+              for (final _ConstellationPlacement p in placementsAll) {
+                final Offset pt = _projectToScreen(p.centerAzimuthDeg, p.centerAltitudeDeg, s);
+                if (pt.dx < 0 || pt.dy < 0 || pt.dx > s.width || pt.dy > s.height) continue;
+                final Offset c = Offset(s.width / 2, s.height / 2);
+                if ((pt - c).distance <= centerRadiusPx) {
+                  centered = p;
+                  break;
+                }
+              }
+              if (centered != null) {
+                _lockedConstellation = centered.name;
+                _lockedSince = DateTime.now();
+              } else {
+                if (_lockedSince != null && DateTime.now().difference(_lockedSince!) > _minLockDuration) {
+                  _lockedConstellation = null;
+                }
+              }
+
+              final List<_ConstellationPlacement> placements = _lockedConstellation == null
+                  ? placementsAll
+                  : placementsAll.where((p) => p.name == _lockedConstellation).toList();
               return Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
@@ -444,6 +473,8 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                    if (_lockedConstellation != null)
+                      Text('lock: ${_lockedConstellation!}'),
                     if (_lastError != null)
                       Text('err: ${_lastError!.length > 40 ? _lastError!.substring(0, 40) + '…' : _lastError!}',
                           style: const TextStyle(color: Colors.redAccent)),
