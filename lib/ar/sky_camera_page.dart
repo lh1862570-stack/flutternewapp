@@ -29,9 +29,10 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
 
   Position? _position;
   double _yaw = 0; // rotación alrededor del eje Z
-  double _pitch = 0; // X
-  double _roll = 0; // Y
+  double _pitch = 0; // inclinación vertical
+  double _roll = 0; // rotación lateral
   double _headingDeg = 0; // brújula
+  double _pitchZero = 0; // calibración del horizonte
 
   List<Map<String, dynamic>> _visibleStars = <Map<String, dynamic>>[];
   bool _showConstellationLines = true;
@@ -157,8 +158,9 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   void _initSensors() {
     _accelSub = accelerometerEvents.listen((AccelerometerEvent e) {
       setState(() {
-        _pitch = e.x; // aproximado para demo
-        _roll = e.y;
+        // En muchos dispositivos en vertical: y ≈ inclinación, x ≈ roll
+        _pitch = e.y;
+        _roll = e.x;
       });
     });
     _gyroSub = gyroscopeEvents.listen((GyroscopeEvent e) {
@@ -284,9 +286,11 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   }
 
   double _estimateCenterAltitudeDeg() {
-    final double pitchRad = math.atan(_pitch / 9.8);
+    // Calcular altitud relativa en grados con calibración de horizonte
+    final double rel = _pitch - _pitchZero;
+    final double pitchRad = math.atan(rel / 9.8);
     final double pitchDeg = pitchRad * 180.0 / math.pi;
-    return pitchDeg; // aproximación
+    return pitchDeg.clamp(-80.0, 80.0);
   }
 
   double _normalizeDegrees(double deg) {
