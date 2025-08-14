@@ -22,8 +22,8 @@ class SkyApiClient {
       'lat': '$latitude',
       'lon': '$longitude',
       if (atIsoUtc != null) 'at': atIsoUtc,
-      if (limit != null) 'limit': '$limit',
-      if (maxMag != null) 'max_mag': '$maxMag',
+      'limit': '${limit ?? 200}',
+      'max_mag': '${maxMag ?? 8.5}',
     });
 
     final http.Response response = await http.get(

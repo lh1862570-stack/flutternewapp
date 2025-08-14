@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import '../services/sky_api.dart';
 import '../config/backend_config.dart';
 import 'constellation_assets.dart';
@@ -24,11 +25,13 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   StreamSubscription<AccelerometerEvent>? _accelSub;
   StreamSubscription<GyroscopeEvent>? _gyroSub;
   StreamSubscription<MagnetometerEvent>? _magSub;
+  StreamSubscription<CompassEvent>? _compassSub;
 
   Position? _position;
   double _yaw = 0; // rotación alrededor del eje Z
   double _pitch = 0; // X
   double _roll = 0; // Y
+  double _headingDeg = 0; // brújula
 
   List<Map<String, dynamic>> _visibleStars = <Map<String, dynamic>>[];
   bool _showConstellationLines = true;
@@ -39,12 +42,38 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   // Catálogo de constelaciones
   List<_ConstellationConfig>? _dynamicConstellations;
   List<_ConstellationConfig> get _defaultConstellations => const <_ConstellationConfig>[
-        _ConstellationConfig(name: 'Cassiopeia', keyStarNames: <String>['Caph', 'Schedar', 'Cih'], assetPath: 'assets/constellations/cassiopeia.png'),
-        _ConstellationConfig(name: 'Cepheus', keyStarNames: <String>['Alderamin'], assetPath: 'assets/constellations/cepheus.png'),
-        _ConstellationConfig(name: 'Draco', keyStarNames: <String>['Eltanin'], assetPath: 'assets/constellations/draco.png'),
-        _ConstellationConfig(name: 'Ursa Major', keyStarNames: <String>['Dubhe', 'Merak'], assetPath: 'assets/constellations/ursamajor.png'),
-        _ConstellationConfig(name: 'Ursa Minor', keyStarNames: <String>['Polaris'], assetPath: 'assets/constellations/ursaminor.png'),
+        _ConstellationConfig(
+          name: 'Cassiopeia',
+          keyStarNames: <String>[
+            'schedar', 'caph', 'ruchbah', 'segin', 'achird', 'gamma cassiopeiae', 'cih', 'navi'
+          ],
+          assetPath: 'assets/constellations/cassiopeia.png',
+        ),
+        _ConstellationConfig(
+          name: 'Cepheus',
+          keyStarNames: <String>['alderamin', 'alfirk', 'alrai', 'errai', 'kurhah'],
+          assetPath: 'assets/constellations/cepheus.png',
+        ),
+        _ConstellationConfig(
+          name: 'Draco',
+          keyStarNames: <String>['eltanin', 'rastaban', 'altais', 'thuban', 'edasich', 'dziban', 'kuma'],
+          assetPath: 'assets/constellations/draco.png',
+        ),
+        _ConstellationConfig(
+          name: 'Ursa Major',
+          keyStarNames: <String>['dubhe', 'merak', 'phecda', 'megrez', 'alioth', 'mizar', 'alkaid'],
+          assetPath: 'assets/constellations/ursamajor.png',
+        ),
+        _ConstellationConfig(
+          name: 'Ursa Minor',
+          keyStarNames: <String>['polaris', 'kochab', 'pherkad'],
+          assetPath: 'assets/constellations/ursaminor.png',
+        ),
       ];
+
+  // Aproximación del campo de visión de la cámara del dispositivo
+  static const double _horizontalFovDeg = 60.0;
+  static const double _verticalFovDeg = 45.0;
 
   @override
   void initState() {
@@ -76,6 +105,7 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     _accelSub?.cancel();
     _gyroSub?.cancel();
     _magSub?.cancel();
+    _compassSub?.cancel();
     super.dispose();
   }
 
@@ -139,6 +169,11 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     _magSub = magnetometerEvents.listen((MagnetometerEvent e) {
       // En una implementación completa, usar fusión de sensores (AHRS/kalman)
     });
+    _compassSub = FlutterCompass.events?.listen((CompassEvent event) {
+      if (event.heading != null) {
+        setState(() => _headingDeg = event.heading!);
+      }
+    });
   }
 
   Future<void> _fetchStars() async {
@@ -178,11 +213,20 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     final List<_ConstellationPlacement> placements = <_ConstellationPlacement>[];
     for (final _ConstellationConfig cfg in configs) {
       final List<Map<String, dynamic>> matches = stars.where((Map<String, dynamic> s) {
-        final String? name = (s['name'] as String?);
-        if (name == null) return false;
-        return cfg.keyStarNames.any((String k) => name.toLowerCase().contains(k.toLowerCase()));
+        final String nameNorm = _normalizeName((s['name'] ?? '') as String);
+        final List<dynamic> aliases = (s['aliases'] as List?) ?? const <dynamic>[];
+        final String aliasNorm = aliases.map((dynamic a) => _normalizeName(a.toString())).join(' ');
+        return cfg.keyStarNames.any((String k) {
+          final String key = _normalizeName(k);
+          return nameNorm.contains(key) || aliasNorm.contains(key);
+        });
       }).toList();
-      if (matches.isEmpty) continue;
+
+      // Si no hay matches ahora, colocamos una posición aproximada usando un subconjunto brillante
+      if (matches.isEmpty) {
+        continue; // si no hay datos confiables, no dibujar esa constelación
+      }
+
       double azSum = 0;
       double altSum = 0;
       for (final Map<String, dynamic> m in matches) {
@@ -196,26 +240,66 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
         assetPath: cfg.assetPath,
         centerAzimuthDeg: centerAz,
         centerAltitudeDeg: centerAlt,
-        pixelSize: 160,
+        pixelSize: 180,
       ));
     }
     return placements;
   }
 
+  String _normalizeName(String input) {
+    final String lower = input.toLowerCase();
+    final String replaced = lower
+        .replaceAll('ursa major', 'uma')
+        .replaceAll('ursae majoris', 'uma')
+        .replaceAll('ursa minor', 'umi')
+        .replaceAll('ursae minoris', 'umi')
+        .replaceAll('cassiopeiae', 'cas')
+        .replaceAll('cephei', 'cep')
+        .replaceAll('draconis', 'dra');
+    final String collapsed = replaced.replaceAll(RegExp(r"[^a-z0-9]"), '');
+    return collapsed;
+  }
+
   Offset _projectToScreen(double azimuthDeg, double altitudeDeg, Size size) {
-    // Proyección simplificada para demo: mapear azimut ~ yaw y altitud ~ pitch/roll
-    double normalizedAz = ((azimuthDeg / 360.0) + 0.5 * math.sin(_yaw)) % 1.0;
-    // Ajuste leve por roll (g ~ 9.8)
-    normalizedAz = (normalizedAz + 0.02 * math.atan(_roll / 9.8)) % 1.0;
+    final double centerAzDeg = _normalizeDegrees(_headingDeg);
+    final double centerAltDeg = _estimateCenterAltitudeDeg();
 
-    double normalizedAlt = (altitudeDeg + 90) / 180.0; // -90..+90 -> 0..1
-    // Ajuste leve por pitch
-    normalizedAlt = (normalizedAlt - 0.05 * math.atan(_pitch / 9.8)).clamp(0.0, 1.0);
+    final double deltaAz = _wrapDegrees(azimuthDeg - centerAzDeg);
+    final double deltaAlt = altitudeDeg - centerAltDeg;
 
-    final double x = normalizedAz * size.width;
-    final double y = (1 - normalizedAlt) * size.height;
-    return Offset(x, y);
-    // Nota: Esto es un placeholder. Luego sustituiremos por proyección real usando matrices y FOV.
+    final double halfHFov = _horizontalFovDeg / 2.0;
+    final double halfVFov = _verticalFovDeg / 2.0;
+    if (deltaAz.abs() > halfHFov || deltaAlt.abs() > halfVFov) {
+      return const Offset(-1000, -1000);
+    }
+
+    double xNorm = 0.5 + (deltaAz / _horizontalFovDeg);
+    double yNorm = 0.5 - (deltaAlt / _verticalFovDeg);
+
+    xNorm += 0.02 * math.atan(_roll / 9.8);
+
+    xNorm = xNorm.clamp(0.0, 1.0);
+    yNorm = yNorm.clamp(0.0, 1.0);
+    return Offset(xNorm * size.width, yNorm * size.height);
+  }
+
+  double _estimateCenterAltitudeDeg() {
+    final double pitchRad = math.atan(_pitch / 9.8);
+    final double pitchDeg = pitchRad * 180.0 / math.pi;
+    return pitchDeg; // aproximación
+  }
+
+  double _normalizeDegrees(double deg) {
+    double d = deg % 360.0;
+    if (d < 0) d += 360.0;
+    return d;
+  }
+
+  double _wrapDegrees(double deg) {
+    double d = deg % 360.0;
+    if (d > 180.0) d -= 360.0;
+    if (d < -180.0) d += 360.0;
+    return d;
   }
 
   @override
@@ -250,6 +334,7 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                 stars: _visibleStars,
                 configs: configs,
               );
+              // Depuración: si falta alguna constelación, mostramos su nombre en HUD
               return Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
@@ -263,8 +348,9 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                   ),
                   if (_showConstellationImages)
                     ...placements.map((p) {
-                      if (p.centerAltitudeDeg < 0) return const SizedBox.shrink();
+                      // Solo mostrar si cae dentro del FOV actual
                       final Offset screen = _projectToScreen(p.centerAzimuthDeg, p.centerAltitudeDeg, size);
+                      if (screen.dx < 0 || screen.dy < 0) return const SizedBox.shrink();
                       return Positioned(
                         left: screen.dx - p.pixelSize / 2,
                         top: screen.dy - p.pixelSize / 2,
@@ -272,7 +358,7 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                         height: p.pixelSize,
                         child: IgnorePointer(
                           child: Opacity(
-                            opacity: 0.85,
+                            opacity: p.centerAltitudeDeg >= 0 ? 0.9 : 0.35,
                             child: Image.asset(p.assetPath, fit: BoxFit.contain),
                           ),
                         ),
@@ -301,6 +387,13 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                     Text('lat: ${_position?.latitude.toStringAsFixed(5) ?? '-'}'),
                     Text('lon: ${_position?.longitude.toStringAsFixed(5) ?? '-'}'),
                     Text('estrellas: ${_visibleStars.length}${_fetching ? ' (cargando...)' : ''}'),
+                    if (_dynamicConstellations != null)
+                      Text(
+                        'detectadas: '
+                        '${_computeConstellationPlacements(stars: _visibleStars, configs: _dynamicConstellations!).map((e) => e.name).join(', ')}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     if (_lastError != null)
                       Text('err: ${_lastError!.length > 40 ? _lastError!.substring(0, 40) + '…' : _lastError!}',
                           style: const TextStyle(color: Colors.redAccent)),
