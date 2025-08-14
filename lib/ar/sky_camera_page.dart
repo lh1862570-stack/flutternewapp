@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import '../services/sky_api.dart';
 import '../config/backend_config.dart';
+import 'constellation_assets.dart';
 
 class SkyCameraPage extends StatefulWidget {
   const SkyCameraPage({super.key});
@@ -31,8 +32,19 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
 
   List<Map<String, dynamic>> _visibleStars = <Map<String, dynamic>>[];
   bool _showConstellationLines = true;
+  bool _showConstellationImages = true;
   bool _fetching = false;
   String? _lastError;
+
+  // Catálogo de constelaciones
+  List<_ConstellationConfig>? _dynamicConstellations;
+  List<_ConstellationConfig> get _defaultConstellations => const <_ConstellationConfig>[
+        _ConstellationConfig(name: 'Cassiopeia', keyStarNames: <String>['Caph', 'Schedar', 'Cih'], assetPath: 'assets/constellations/cassiopeia.png'),
+        _ConstellationConfig(name: 'Cepheus', keyStarNames: <String>['Alderamin'], assetPath: 'assets/constellations/cepheus.png'),
+        _ConstellationConfig(name: 'Draco', keyStarNames: <String>['Eltanin'], assetPath: 'assets/constellations/draco.png'),
+        _ConstellationConfig(name: 'Ursa Major', keyStarNames: <String>['Dubhe', 'Merak'], assetPath: 'assets/constellations/ursamajor.png'),
+        _ConstellationConfig(name: 'Ursa Minor', keyStarNames: <String>['Polaris'], assetPath: 'assets/constellations/ursaminor.png'),
+      ];
 
   @override
   void initState() {
@@ -41,6 +53,16 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     _initCamera();
     _initSensors();
     _initLocationAndFetch();
+    // Cargar constelaciones dinámicas
+    _loadDynamicConstellations().then((List<_ConstellationConfig> list) {
+      if (!mounted) return;
+      final Set<String> known = _defaultConstellations.map((e) => e.assetPath).toSet();
+      final List<_ConstellationConfig> merged = <_ConstellationConfig>[..._defaultConstellations];
+      for (final _ConstellationConfig c in list) {
+        if (!known.contains(c.assetPath)) merged.add(c);
+      }
+      setState(() => _dynamicConstellations = merged);
+    });
   }
 
   @override
@@ -140,6 +162,46 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     }
   }
 
+  Future<List<_ConstellationConfig>> _loadDynamicConstellations() async {
+    final List<String> paths = await loadConstellationAssetPaths();
+    return paths.map((String p) {
+      final String fileName = p.split('/').last;
+      final String name = fileName.replaceAll('.png', '');
+      return _ConstellationConfig(name: name, keyStarNames: <String>[name], assetPath: p);
+    }).toList();
+  }
+
+  List<_ConstellationPlacement> _computeConstellationPlacements({
+    required List<Map<String, dynamic>> stars,
+    required List<_ConstellationConfig> configs,
+  }) {
+    final List<_ConstellationPlacement> placements = <_ConstellationPlacement>[];
+    for (final _ConstellationConfig cfg in configs) {
+      final List<Map<String, dynamic>> matches = stars.where((Map<String, dynamic> s) {
+        final String? name = (s['name'] as String?);
+        if (name == null) return false;
+        return cfg.keyStarNames.any((String k) => name.toLowerCase().contains(k.toLowerCase()));
+      }).toList();
+      if (matches.isEmpty) continue;
+      double azSum = 0;
+      double altSum = 0;
+      for (final Map<String, dynamic> m in matches) {
+        azSum += ((m['azimuth_deg'] as num?)?.toDouble() ?? 0);
+        altSum += ((m['altitude_deg'] as num?)?.toDouble() ?? -90);
+      }
+      final double centerAz = azSum / matches.length;
+      final double centerAlt = altSum / matches.length;
+      placements.add(_ConstellationPlacement(
+        name: cfg.name,
+        assetPath: cfg.assetPath,
+        centerAzimuthDeg: centerAz,
+        centerAltitudeDeg: centerAlt,
+        pixelSize: 160,
+      ));
+    }
+    return placements;
+  }
+
   Offset _projectToScreen(double azimuthDeg, double altitudeDeg, Size size) {
     // Proyección simplificada para demo: mapear azimut ~ yaw y altitud ~ pitch/roll
     double normalizedAz = ((azimuthDeg / 360.0) + 0.5 * math.sin(_yaw)) % 1.0;
@@ -183,13 +245,40 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
           LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
               final Size size = Size(constraints.maxWidth, constraints.maxHeight);
-              return CustomPaint(
-                size: size,
-                painter: _SkyOverlayPainter(
-                  stars: _visibleStars,
-                  project: (double az, double alt) => _projectToScreen(az, alt, size),
-                  showConstellationLines: _showConstellationLines,
-                ),
+              final List<_ConstellationConfig> configs = _dynamicConstellations ?? _defaultConstellations;
+              final List<_ConstellationPlacement> placements = _computeConstellationPlacements(
+                stars: _visibleStars,
+                configs: configs,
+              );
+              return Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  CustomPaint(
+                    size: size,
+                    painter: _SkyOverlayPainter(
+                      stars: _visibleStars,
+                      project: (double az, double alt) => _projectToScreen(az, alt, size),
+                      showConstellationLines: _showConstellationLines,
+                    ),
+                  ),
+                  if (_showConstellationImages)
+                    ...placements.map((p) {
+                      if (p.centerAltitudeDeg < 0) return const SizedBox.shrink();
+                      final Offset screen = _projectToScreen(p.centerAzimuthDeg, p.centerAltitudeDeg, size);
+                      return Positioned(
+                        left: screen.dx - p.pixelSize / 2,
+                        top: screen.dy - p.pixelSize / 2,
+                        width: p.pixelSize,
+                        height: p.pixelSize,
+                        child: IgnorePointer(
+                          child: Opacity(
+                            opacity: 0.85,
+                            child: Image.asset(p.assetPath, fit: BoxFit.contain),
+                          ),
+                        ),
+                      );
+                    }),
+                ],
               );
             },
           ),
@@ -237,6 +326,12 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                   heroTag: 'toggle-lines',
                   onPressed: () => setState(() => _showConstellationLines = !_showConstellationLines),
                   child: Icon(_showConstellationLines ? Icons.grid_off : Icons.grid_on),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'toggle-images',
+                  onPressed: () => setState(() => _showConstellationImages = !_showConstellationImages),
+                  child: Icon(_showConstellationImages ? Icons.image_not_supported : Icons.image),
                 ),
               ],
             ),
@@ -301,6 +396,34 @@ class _SkyOverlayPainter extends CustomPainter {
     return oldDelegate.stars != stars ||
         oldDelegate.showConstellationLines != showConstellationLines;
   }
+}
+
+class _ConstellationConfig {
+  const _ConstellationConfig({
+    required this.name,
+    required this.keyStarNames,
+    required this.assetPath,
+  });
+
+  final String name;
+  final List<String> keyStarNames;
+  final String assetPath;
+}
+
+class _ConstellationPlacement {
+  const _ConstellationPlacement({
+    required this.name,
+    required this.assetPath,
+    required this.centerAzimuthDeg,
+    required this.centerAltitudeDeg,
+    required this.pixelSize,
+  });
+
+  final String name;
+  final String assetPath;
+  final double centerAzimuthDeg;
+  final double centerAltitudeDeg;
+  final double pixelSize;
 }
 
 
