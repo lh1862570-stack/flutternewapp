@@ -38,6 +38,32 @@ class SkyApiClient {
     return decoded.cast<Map<String, dynamic>>();
   }
 
+  Future<Map<String, dynamic>> fetchConstellationFrame({
+    required String name,
+    required double latitude,
+    required double longitude,
+    String? atIsoUtc,
+    double minAltitudeDeg = -90.0,
+  }) async {
+    final Uri uri = Uri.parse('${baseUrl.replaceAll(RegExp(r"/+$"), '')}/constellation-frame')
+        .replace(queryParameters: <String, String>{
+      'name': name,
+      'lat': '$latitude',
+      'lon': '$longitude',
+      if (atIsoUtc != null) 'at': atIsoUtc,
+      'min_alt': '$minAltitudeDeg',
+    });
+    final http.Response response = await http.get(
+      uri,
+      headers: const <String, String>{'Accept': 'application/json'},
+    );
+    if (response.statusCode != 200) {
+      final String msg = _friendly400s[response.statusCode] ?? 'HTTP ${response.statusCode}';
+      throw Exception('$msg: ${response.body}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<List<Map<String, dynamic>>> fetchVisibleBodies({
     required double latitude,
     required double longitude,

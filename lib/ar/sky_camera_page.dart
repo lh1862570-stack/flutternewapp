@@ -29,10 +29,21 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
 
   Position? _position;
   double _yaw = 0; // rotación alrededor del eje Z
-  double _pitch = 0; // inclinación vertical
-  double _roll = 0; // rotación lateral
+  double _pitch = 0; // inclinación vertical (m/s^2 sin normalizar)
+  double _roll = 0; // rotación lateral (m/s^2 sin normalizar)
   double _headingDeg = 0; // brújula
-  double _pitchZero = 0; // calibración del horizonte
+  double _headingSmoothedDeg = 0; // brújula suavizada
+  double _headingZeroDeg = 0; // calibración de norte relativo
+  // Componentes crudos del acelerómetro (incluye gravedad)
+  double _ax = 0, _ay = 0, _az = 0;
+  // Ángulos calculados desde acelerómetro en grados
+  double _pitchDeg = 0, _rollDeg = 0;
+  double _pitchSmoothedDeg = 0;
+  // Calibración del horizonte (en grados)
+  double _pitchZeroDeg = 0;
+  // Ajustes manuales
+  double _pitchScale = 1.0;
+  bool _invertPitch = false;
 
   List<Map<String, dynamic>> _visibleStars = <Map<String, dynamic>>[];
   bool _showConstellationLines = true;
@@ -73,8 +84,8 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
       ];
 
   // Aproximación del campo de visión de la cámara del dispositivo
-  static const double _horizontalFovDeg = 60.0;
-  static const double _verticalFovDeg = 45.0;
+  static const double _horizontalFovDeg = 85.0;
+  static const double _verticalFovDeg = 65.0;
 
   @override
   void initState() {
@@ -157,10 +168,22 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
 
   void _initSensors() {
     _accelSub = accelerometerEvents.listen((AccelerometerEvent e) {
+      // Guardar crudos
+      _ax = e.x;
+      _ay = e.y;
+      _az = e.z;
+
+      // Calcular pitch/roll en radianes (asumiendo orientación vertical/portrait)
+      final double pitchRad = math.atan2(-_ax, math.sqrt(_ay * _ay + _az * _az));
+      final double rollRad = math.atan2(_ay, _az);
+      final double pitchDeg = pitchRad * 180.0 / math.pi;
+      final double rollDeg = rollRad * 180.0 / math.pi;
+
       setState(() {
-        // En muchos dispositivos en vertical: y ≈ inclinación, x ≈ roll
-        _pitch = e.y;
-        _roll = e.x;
+        _pitchDeg = pitchDeg;
+        _rollDeg = rollDeg;
+        // Suavizado simple para estabilidad visual
+        _pitchSmoothedDeg = 0.9 * _pitchSmoothedDeg + 0.1 * _pitchDeg;
       });
     });
     _gyroSub = gyroscopeEvents.listen((GyroscopeEvent e) {
@@ -173,7 +196,17 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     });
     _compassSub = FlutterCompass.events?.listen((CompassEvent event) {
       if (event.heading != null) {
-        setState(() => _headingDeg = event.heading!);
+        final double h = event.heading!;
+        // Suavizado circular (mantener continuidad 0..360)
+        double prev = _headingSmoothedDeg;
+        if ((h - prev).abs() > 180) {
+          prev += (h > prev) ? 360 : -360;
+        }
+        final double smoothed = 0.85 * prev + 0.15 * h;
+        setState(() {
+          _headingDeg = h;
+          _headingSmoothedDeg = (smoothed % 360 + 360) % 360;
+        });
       }
     });
   }
@@ -214,6 +247,18 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   }) {
     final List<_ConstellationPlacement> placements = <_ConstellationPlacement>[];
     for (final _ConstellationConfig cfg in configs) {
+      // Prioridad: anclar centro con frame del backend (si disponible)
+      if (_position != null) {
+        try {
+          // Nota: Para no bloquear UI, podríamos cachear frames; aquí usamos una heurística simple:
+          // si ya tenemos matches locales usamos eso; sino, caemos al backend.
+          final Map<String, dynamic> frame = <String, dynamic>{};
+          // Marcador de lugar: en una versión siguiente lo cachearemos asincrónico
+          // y evitaremos llamadas múltiples. Por ahora mantenemos la lógica local.
+        } catch (_) {}
+      }
+
+      // Fallback: usar estrellas locales visibles que macheen claves
       final List<Map<String, dynamic>> matches = stars.where((Map<String, dynamic> s) {
         final String nameNorm = _normalizeName((s['name'] ?? '') as String);
         final List<dynamic> aliases = (s['aliases'] as List?) ?? const <dynamic>[];
@@ -224,9 +269,8 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
         });
       }).toList();
 
-      // Si no hay matches ahora, colocamos una posición aproximada usando un subconjunto brillante
       if (matches.isEmpty) {
-        continue; // si no hay datos confiables, no dibujar esa constelación
+        continue;
       }
 
       double azSum = 0;
@@ -263,7 +307,7 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   }
 
   Offset _projectToScreen(double azimuthDeg, double altitudeDeg, Size size) {
-    final double centerAzDeg = _normalizeDegrees(_headingDeg);
+    final double centerAzDeg = _normalizeDegrees(_headingSmoothedDeg - _headingZeroDeg);
     final double centerAltDeg = _estimateCenterAltitudeDeg();
 
     final double deltaAz = _wrapDegrees(azimuthDeg - centerAzDeg);
@@ -278,7 +322,8 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
     double xNorm = 0.5 + (deltaAz / _horizontalFovDeg);
     double yNorm = 0.5 - (deltaAlt / _verticalFovDeg);
 
-    xNorm += 0.02 * math.atan(_roll / 9.8);
+    // Pequeña corrección por roll usando grados
+    xNorm += 0.02 * math.tan(_rollDeg * math.pi / 180.0);
 
     xNorm = xNorm.clamp(0.0, 1.0);
     yNorm = yNorm.clamp(0.0, 1.0);
@@ -286,11 +331,10 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
   }
 
   double _estimateCenterAltitudeDeg() {
-    // Calcular altitud relativa en grados con calibración de horizonte
-    final double rel = _pitch - _pitchZero;
-    final double pitchRad = math.atan(rel / 9.8);
-    final double pitchDeg = pitchRad * 180.0 / math.pi;
-    return pitchDeg.clamp(-80.0, 80.0);
+    // Usar pitch desde acelerómetro en grados, con calibración
+    final double sign = _invertPitch ? -1.0 : 1.0;
+    final double deg = sign * (_pitchSmoothedDeg - _pitchZeroDeg) * _pitchScale;
+    return deg.clamp(-80.0, 80.0);
   }
 
   double _normalizeDegrees(double deg) {
@@ -352,9 +396,11 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                   ),
                   if (_showConstellationImages)
                     ...placements.map((p) {
-                      // Solo mostrar si cae dentro del FOV actual
                       final Offset screen = _projectToScreen(p.centerAzimuthDeg, p.centerAltitudeDeg, size);
-                      if (screen.dx < 0 || screen.dy < 0) return const SizedBox.shrink();
+                      // Si cae fuera del FOV, no dibujar
+                      if (screen.dx < 0 || screen.dy < 0 || screen.dx > size.width || screen.dy > size.height) {
+                        return const SizedBox.shrink();
+                      }
                       return Positioned(
                         left: screen.dx - p.pixelSize / 2,
                         top: screen.dy - p.pixelSize / 2,
@@ -429,6 +475,34 @@ class _SkyCameraPageState extends State<SkyCameraPage> with WidgetsBindingObserv
                   heroTag: 'toggle-images',
                   onPressed: () => setState(() => _showConstellationImages = !_showConstellationImages),
                   child: Icon(_showConstellationImages ? Icons.image_not_supported : Icons.image),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'calibrate-horizon',
+                  onPressed: () => setState(() => _pitchZeroDeg = _pitchSmoothedDeg),
+                  tooltip: 'Calibrar horizonte',
+                  child: const Icon(Icons.tune),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'calibrate-north',
+                  onPressed: () => setState(() => _headingZeroDeg = _headingSmoothedDeg),
+                  tooltip: 'Calibrar norte',
+                  child: const Icon(Icons.explore),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'invert-pitch',
+                  onPressed: () => setState(() => _invertPitch = !_invertPitch),
+                  tooltip: 'Invertir vertical',
+                  child: Icon(_invertPitch ? Icons.swap_vert : Icons.swap_vert_circle_outlined),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'pitch-scale',
+                  onPressed: () => setState(() => _pitchScale = (_pitchScale >= 1.8) ? 0.7 : (_pitchScale + 0.3)),
+                  tooltip: 'Sensibilidad vertical',
+                  child: const Icon(Icons.stacked_line_chart),
                 ),
               ],
             ),
