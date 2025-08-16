@@ -35,8 +35,8 @@ class _SkyARPageState extends State<SkyARPage> {
   // double _accelY = 0;
   // double _accelZ = 0;
 
-  static const double _horizontalFovDeg = 60.0;
-  static const double _verticalFovDeg = 45.0;
+  static const double _horizontalFovDeg = 85.0; // Ajuste inicial recomendado
+  static const double _verticalFovDeg = 65.0;   // Ajuste inicial recomendado
   static const double _pitchToAltScale = 30.0;
 
   List<Map<String, dynamic>> _visibleStars = <Map<String, dynamic>>[];
@@ -45,6 +45,13 @@ class _SkyARPageState extends State<SkyARPage> {
   bool _showConstellationImages = true;
   bool _showMilkyWay = true;
   bool _fetching = false;
+
+  // Estado de backend AR (IAU)
+  Timer? _pollTimer;
+  Size? _lastLayoutSize;
+  String? _activeConstellationName; // de /iau-in-fov
+  List<Map<String, dynamic>> _constellationsScreen = <Map<String, dynamic>>[]; // de /constellations-screen
+  Set<String> _availableAssets = <String>{};
 
   List<_ConstellationConfig> get _defaultConstellations => const <_ConstellationConfig>[
         _ConstellationConfig(name: 'Cassiopeia', keyStarNames: <String>['Caph', 'Schedar', 'Cih'], assetPath: 'assets/constellations/cassiopeia.png'),
@@ -113,8 +120,11 @@ class _SkyARPageState extends State<SkyARPage> {
           }
         }
         _dynamicConstellations = merged;
+        _availableAssets = dynamicList.map((e) => e.assetPath).toSet();
       });
     });
+
+    _startPollingBackendAr();
   }
 
   List<_ConstellationConfig>? _dynamicConstellations;
@@ -124,12 +134,20 @@ class _SkyARPageState extends State<SkyARPage> {
     _accelSub?.cancel();
     _gyroSub?.cancel();
     _compassSub?.cancel();
+    _pollTimer?.cancel();
     // _arSessionManager?.dispose();
     super.dispose();
   }
 
   Future<void> _initLocationAndFetch() async {
     try {
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        return;
+      }
       final Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best);
       setState(() => _position = pos);
       await _fetchStars();
@@ -180,6 +198,46 @@ class _SkyARPageState extends State<SkyARPage> {
     } finally {
       setState(() => _fetching = false);
     }
+  }
+
+  void _startPollingBackendAr() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (_position == null || _lastLayoutSize == null) return;
+      final double yawDeg = _normalizeDegrees(_headingDeg);
+      final double pitchDeg = _estimateCenterAltitudeDeg();
+      final Size size = _lastLayoutSize!;
+      try {
+        // Constellación activa (en FOV)
+        final Map<String, dynamic> active = await _api.fetchIauInFov(
+          latitude: _position!.latitude,
+          longitude: _position!.longitude,
+          yawDeg: yawDeg,
+          pitchDeg: pitchDeg,
+          fovHDeg: _horizontalFovDeg,
+          fovVDeg: _verticalFovDeg,
+        );
+        // Mapa de pantalla para superponer imágenes
+        final List<Map<String, dynamic>> screen = await _api.fetchConstellationsScreen(
+          latitude: _position!.latitude,
+          longitude: _position!.longitude,
+          yawDeg: yawDeg,
+          pitchDeg: pitchDeg,
+          fovHDeg: _horizontalFovDeg,
+          fovVDeg: _verticalFovDeg,
+          widthPx: size.width.toInt(),
+          heightPx: size.height.toInt(),
+          clipEdgesToFov: true,
+        );
+        if (!mounted) return;
+        setState(() {
+          _activeConstellationName = (active['name'] as String?) ?? (active['constellation'] as String?);
+          _constellationsScreen = screen;
+        });
+      } catch (_) {
+        // Silenciar errores intermitentes de red para no saturar UI
+      }
+    });
   }
 
   Offset _projectToScreen(double azimuthDeg, double altitudeDeg, Size size) {
@@ -239,6 +297,7 @@ class _SkyARPageState extends State<SkyARPage> {
           LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
               final Size size = Size(constraints.maxWidth, constraints.maxHeight);
+              _lastLayoutSize = size;
               final List<_ConstellationConfig> configs = _dynamicConstellations ?? _defaultConstellations;
               final List<_ConstellationPlacement> placements = _computeConstellationPlacements(
                 stars: _visibleStars,
@@ -258,22 +317,7 @@ class _SkyARPageState extends State<SkyARPage> {
                     ),
                   ),
                   if (_showConstellationImages)
-                    ...placements.map((p) {
-                      final Offset screen = _projectToScreen(p.centerAzimuthDeg, p.centerAltitudeDeg, size);
-                      if (p.centerAltitudeDeg < 0) return const SizedBox.shrink();
-                      return Positioned(
-                        left: screen.dx - p.pixelSize / 2,
-                        top: screen.dy - p.pixelSize / 2,
-                        width: p.pixelSize,
-                        height: p.pixelSize,
-                        child: IgnorePointer(
-                          child: Opacity(
-                            opacity: 0.85,
-                            child: Image.asset(p.assetPath, fit: BoxFit.contain),
-                          ),
-                        ),
-                      );
-                    }),
+                    ..._buildConstellationImageWidgets(size, placements),
                 ],
               );
             },
@@ -435,6 +479,127 @@ class _ConstellationPlacement {
   final double centerAzimuthDeg;
   final double centerAltitudeDeg;
   final double pixelSize;
+}
+
+// Helpers de mapeo IAU -> asset PNG (español)
+String? assetForIauName(String iauName, List<_ConstellationConfig>? dynamicConfigs) {
+  final String key = _normalizeKey(iauName);
+  const Map<String, String> direct = <String, String>{
+    'aquila': 'assets/constellations/aguila.png',
+    'andromeda': 'assets/constellations/andromeda.png',
+    'bootes': 'assets/constellations/bootes.png',
+    'canismajor': 'assets/constellations/canmayor.png',
+    'cassiopeia': 'assets/constellations/casiopea.png',
+    'cepheus': 'assets/constellations/cepheus.png',
+    'cetus': 'assets/constellations/cetus.png',
+    'cygnus': 'assets/constellations/cygnus.png',
+    'draco': 'assets/constellations/draco.png',
+    'eridanus': 'assets/constellations/eridanus.png',
+    'scorpius': 'assets/constellations/escorpio.png',
+    'scorpio': 'assets/constellations/escorpio.png',
+    'gemini': 'assets/constellations/geminis.png',
+    'leo': 'assets/constellations/leo.png',
+    'lyra': 'assets/constellations/lyra.png',
+    'orion': 'assets/constellations/orion.png',
+    'pegasus': 'assets/constellations/pegaso.png',
+    'sagittarius': 'assets/constellations/sagitario.png',
+    'taurus': 'assets/constellations/tauro.png',
+    'ursamajor': 'assets/constellations/ursamajor.png',
+    'ursaminor': 'assets/constellations/ursaminor.png',
+    'virgo': 'assets/constellations/virgo.png',
+  };
+  if (direct.containsKey(key)) return direct[key];
+  // Intento con dinámicos (por si agregas más PNGs)
+  if (dynamicConfigs != null) {
+    for (final _ConstellationConfig c in dynamicConfigs) {
+      if (_normalizeKey(c.name) == key) return c.assetPath;
+    }
+  }
+  return null;
+}
+
+String _normalizeKey(String input) {
+  final String noSpaces = input.toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  final String noDiacritics = noSpaces
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('ö', 'o')
+      .replaceAll('ï', 'i')
+      .replaceAll('ü', 'u')
+      .replaceAll('ñ', 'n');
+  return noDiacritics.replaceAll(RegExp(r'[^a-z]'), '');
+}
+
+extension on _SkyARPageState {
+  List<Widget> _buildConstellationImageWidgets(Size size, List<_ConstellationPlacement> localPlacements) {
+    final List<Widget> widgets = <Widget>[];
+    if (_constellationsScreen.isNotEmpty) {
+      // Mostrar solo UNA constelación: la "activa" del backend si existe; si no, la primera.
+      final String? activeKey = _activeConstellationName == null
+          ? null
+          : _normalizeKey(_activeConstellationName!);
+      final Iterable<Map<String, dynamic>> filtered = activeKey == null
+          ? _constellationsScreen.take(1)
+          : _constellationsScreen.where((Map<String, dynamic> item) {
+              final String? n = (item['name'] as String?) ?? (item['constellation'] as String?);
+              return n != null && _normalizeKey(n) == activeKey;
+            });
+
+      for (final Map<String, dynamic> item in filtered) {
+        final String? name = (item['name'] as String?) ?? (item['constellation'] as String?);
+        if (name == null) continue;
+        final String? assetPathMaybe = assetForIauName(name, _dynamicConstellations);
+        if (assetPathMaybe == null) continue;
+        if (!_availableAssets.contains(assetPathMaybe)) continue;
+        final double x = ((item['x_px'] as num?)?.toDouble() ?? (size.width / 2));
+        final double y = ((item['y_px'] as num?)?.toDouble() ?? (size.height / 2));
+        final double px = ((item['pixel_size'] as num?)?.toDouble() ?? 160);
+        widgets.add(Positioned(
+          left: x - px / 2,
+          top: y - px / 2,
+          width: px,
+          height: px,
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: 1.0,
+              child: Image.asset(assetPathMaybe, fit: BoxFit.contain),
+            ),
+          ),
+        ));
+      }
+      return widgets;
+    }
+    // Fallback local (aproximado) si backend aún no responde
+    // Solo una también en fallback: priorizar la activa si se conoce
+    final String? activeKey = _activeConstellationName == null
+        ? null
+        : _normalizeKey(_activeConstellationName!);
+    final Iterable<_ConstellationPlacement> toDraw = activeKey == null
+        ? localPlacements.take(1)
+        : localPlacements.where((p) => _normalizeKey(p.name) == activeKey).take(1);
+    for (final _ConstellationPlacement p in toDraw) {
+      final Offset screen = _projectToScreen(p.centerAzimuthDeg, p.centerAltitudeDeg, size);
+      final String assetPathCandidate = assetForIauName(p.name, _dynamicConstellations) ?? p.assetPath;
+      if (!_availableAssets.contains(assetPathCandidate)) continue;
+      final double px = p.pixelSize.toDouble();
+      widgets.add(Positioned(
+        left: screen.dx - px / 2,
+        top: screen.dy - px / 2,
+        width: px,
+        height: px,
+        child: IgnorePointer(
+          child: Opacity(
+            opacity: 1.0,
+            child: Image.asset(assetPathCandidate, fit: BoxFit.contain),
+          ),
+        ),
+      ));
+    }
+    return widgets;
+  }
 }
 
 

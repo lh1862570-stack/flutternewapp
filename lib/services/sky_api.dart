@@ -87,6 +87,88 @@ class SkyApiClient {
     final List<dynamic> decoded = jsonDecode(response.body) as List<dynamic>;
     return decoded.cast<Map<String, dynamic>>();
   }
+
+  Future<Map<String, dynamic>> fetchIauInFov({
+    required double latitude,
+    required double longitude,
+    required double yawDeg,
+    required double pitchDeg,
+    required double fovHDeg,
+    required double fovVDeg,
+    int cacheBucketSeconds = 1,
+  }) async {
+    final Uri uri = Uri.parse('${baseUrl.replaceAll(RegExp(r"/+$$"), '')}/iau-in-fov').replace(
+      queryParameters: <String, String>{
+        'lat': '$latitude',
+        'lon': '$longitude',
+        'yaw_deg': '$yawDeg',
+        'pitch_deg': '$pitchDeg',
+        'fov_h_deg': '$fovHDeg',
+        'fov_v_deg': '$fovVDeg',
+        'cache_bucket_s': '$cacheBucketSeconds',
+      },
+    );
+    final http.Response response = await http.get(
+      uri,
+      headers: const <String, String>{'Accept': 'application/json'},
+    );
+    if (response.statusCode != 200) {
+      final String msg = _friendly400s[response.statusCode] ?? 'HTTP ${response.statusCode}';
+      throw Exception('$msg: ${response.body}');
+    }
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return <String, dynamic>{'data': decoded};
+  }
+
+  Future<List<Map<String, dynamic>>> fetchConstellationsScreen({
+    required double latitude,
+    required double longitude,
+    required double yawDeg,
+    required double pitchDeg,
+    required double fovHDeg,
+    required double fovVDeg,
+    required int widthPx,
+    required int heightPx,
+    bool clipEdgesToFov = true,
+    int cacheBucketSeconds = 1,
+  }) async {
+    final Uri uri = Uri.parse('${baseUrl.replaceAll(RegExp(r"/+$$"), '')}/constellations-screen').replace(
+      queryParameters: <String, String>{
+        'lat': '$latitude',
+        'lon': '$longitude',
+        'yaw_deg': '$yawDeg',
+        'pitch_deg': '$pitchDeg',
+        'fov_h_deg': '$fovHDeg',
+        'fov_v_deg': '$fovVDeg',
+        'width_px': '$widthPx',
+        'height_px': '$heightPx',
+        'clip_edges_to_fov': clipEdgesToFov ? 'true' : 'false',
+        'cache_bucket_s': '$cacheBucketSeconds',
+      },
+    );
+    final http.Response response = await http.get(
+      uri,
+      headers: const <String, String>{'Accept': 'application/json'},
+    );
+    if (response.statusCode != 200) {
+      final String msg = _friendly400s[response.statusCode] ?? 'HTTP ${response.statusCode}';
+      throw Exception('$msg: ${response.body}');
+    }
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is List) {
+      return decoded.cast<Map<String, dynamic>>();
+    }
+    if (decoded is Map<String, dynamic>) {
+      if (decoded['constellations'] is List) {
+        return (decoded['constellations'] as List).cast<Map<String, dynamic>>();
+      }
+      if (decoded['data'] is List) {
+        return (decoded['data'] as List).cast<Map<String, dynamic>>();
+      }
+    }
+    throw Exception('Respuesta no reconocida en /constellations-screen: ${response.body}');
+  }
 }
 
 

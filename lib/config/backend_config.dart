@@ -15,7 +15,7 @@ class BackendConfig {
   // Configs locales
   static const String emulatorBaseUrl = 'http://10.0.2.2:8000';
   // Sustituye por la IP local de tu PC (ipconfig) y mismo puerto que usa uvicorn/fastapi
-  static const String physicalDeviceBaseUrl = 'http://10.0.0.55:8000';
+  static const String physicalDeviceBaseUrl = 'http://10.0.0.53:8000';
 
   // Backend público (si ya lo tienes desplegado)
   static const String remoteBaseUrl = 'https://tu-servicio.onrender.com';
